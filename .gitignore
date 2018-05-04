@@ -1,0 +1,8 @@
+.idea/
+.test.py
+Scrapy/config.py
+geckodriver.log
+aa.png
+*.txt
+*.json
+SinaSpider-master
