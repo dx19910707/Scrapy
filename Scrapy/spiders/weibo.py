@@ -1,22 +1,18 @@
-import time,json,re
+import time, re
 from scrapy import Request
 from scrapy import Spider
-from selenium.webdriver.firefox.options import Options
-from selenium.webdriver import Firefox
-from ..config import pwd
+from Scrapy.utils import get_cookie_by_selenium
+from ..config import pwd,start_uids,account
 from ..items import WeiboInfoItem
-from scrapy.selector import Selector
-import datetime
-from lxml import etree
-import requests
+
 
 class WeiboSpider(Spider):
     name = "weibo"
     host = "https://weibo.cn/"
-    account = 'dx19910707@qq.com'
+    account = account
     password = pwd
 
-    start_uids = ['3222383844']
+    start_uids = start_uids
 
     custom_settings = {
         'ROBOTSTXT_OBEY':False,
@@ -26,10 +22,12 @@ class WeiboSpider(Spider):
     def start_requests(self):
         for uid in self.start_uids:
             url = self.host + uid
-            cookies = self.get_cookie(self.account,self.password)
-            return [Request(url,cookies=eval(cookies), callback=self.post_login)]
+            cookies = get_cookie_by_selenium.get_cookie(self.account, self.password)
+            if not cookies:
+                return
+            return [Request(url,cookies=eval(cookies), callback=self.parse_info1)]
 
-    def post_login(self,response):
+    def parse_info1(self,response):
         uid = re.findall('https://weibo.cn/(\d+)', response.url)
         if uid:
             uid = uid[0]
@@ -48,12 +46,12 @@ class WeiboSpider(Spider):
         info_item['Fans'] = num_fans[0]
         info = {}
         info['info'] = info_item
-        yield Request(url="https://weibo.cn/%s/info" % uid, callback=self.parse_information,dont_filter=True,meta={'info':info_item})
+        yield Request(url="https://weibo.cn/%s/info" % uid, callback=self.parse_info2,dont_filter=True,meta={'info':info_item})
         # yield Request(url="https://weibo.cn/%s/profile?page=1" % uid, callback=self.parse_profiles, dont_filter=True)
         # yield Request(url="https://weibo.cn/%s/follow" % uid, callback=self.parse_relationship, dont_filter=True)
         # yield Request(url="https://weibo.cn/%s/fans" % uid, callback=self.parse_relationship, dont_filter=True)
 
-    def parse_information(self, response):
+    def parse_info2(self, response):
         """ 抓取个人信息 """
         info = self.get_info(response)
         yield info
@@ -77,66 +75,23 @@ class WeiboSpider(Spider):
     def parse_relationship(self, response):
         """ 打开url爬取里面的个人ID """
         if "/follow" in response.url:
-            ID = re.findall('(\d+)/follow', response.url)[0]
+            ID = re.findall('(\d+)/follow', response.url)
             flag = True
         else:
-            ID = re.findall('(\d+)/fans', response.url)[0]
+            ID = re.findall('(\d+)/fans', response.url)
             flag = False
-        urls = response.xpath('//a[text()="关注他" or text()="关注她"]/@href').extract()
+        urls = response.xpath('//a[text()="关注他" or text()="关注她" or text()="取消关注"]/@href').extract()
         uids = re.findall('uid=(\d+)', ";".join(urls), re.S)
         for uid in uids:
-            relationshipsItem = {}
-            relationshipsItem["Host1"] = ID if flag else uid
-            relationshipsItem["Host2"] = uid if flag else ID
-            yield relationshipsItem
-            yield Request(url="https://weibo.cn/%s/info" % uid, callback=self.parse_information)
+            # relationshipsItem = {}
+            # relationshipsItem["Host1"] = ID if flag else uid
+            # relationshipsItem["Host2"] = uid if flag else ID
+            # yield relationshipsItem
+            yield Request(url="https://weibo.cn/%s" % uid, callback=self.parse_info1)
 
         next_url = response.xpath('//a[text()="下页"]/@href').extract()
         if next_url:
             yield Request(url=self.host + next_url[0], callback=self.parse_relationship, dont_filter=True)
-
-    def get_cookie(self,account, password):
-        """ 获取一个账号的Cookie """
-        try:
-            options = Options()
-            options.add_argument('-headless')  # 无头参数
-            browser = Firefox(firefox_options=options)  # 配了环境变量第一个参数就可以省了，不然传绝对路径
-            browser.get("https://weibo.cn/login/")
-            time.sleep(1)
-
-            failure = 0
-            while "微博" in browser.title and failure < 5:
-                failure += 1
-                username = browser.find_element_by_id("loginName")
-                username.clear()
-                username.send_keys(account)
-
-                pwd = browser.find_element_by_xpath('//input[@type="password"]')
-                pwd.clear()
-                pwd.send_keys(password)
-
-                commit = browser.find_element_by_id("loginAction")
-                commit.click()
-                time.sleep(3)
-                browser.save_screenshot("aa.png")
-                if "我的首页" not in browser.title:
-                    time.sleep(4)
-                if '未激活微博' in browser.page_source:
-                    print('账号未开通微博')
-                    return {}
-
-            cookie = {}
-            if "我的首页" in browser.title:
-                for elem in browser.get_cookies():
-                    cookie[elem["name"]] = elem["value"]
-            return json.dumps(cookie)
-        except Exception as e:
-            return ""
-        finally:
-            try:
-                browser.quit()
-            except Exception as e:
-                pass
 
     def get_info(self, response):
         info = response.meta['info']
@@ -161,8 +116,7 @@ class WeiboSpider(Spider):
         info["Province"] = place[0] if place else ''
         info["City"] = place[1] if len(place) > 1 else ''
         info["BriefIntroduction"] = briefIntroduction[0] if briefIntroduction and briefIntroduction[0] else ''
-        birthday = datetime.datetime.strptime(birthday[0], "%Y-%m-%d") if birthday else ''
-        info["Birthday"] = birthday
+        info['Birthday'] = birthday[0]  if birthday else ''  # 有可能是星座，而非时间
         info["Sentiment"] = sentiment[0] if sentiment else ''
         info["VIPlevel"] = vipLevel[0].replace('\xa0','') if vipLevel else 0
         info["Authentication"] = authentication[0] if authentication else ''
