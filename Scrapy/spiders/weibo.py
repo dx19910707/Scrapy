@@ -2,7 +2,7 @@ import time, re
 from scrapy import Request
 from scrapy import Spider
 from Scrapy.utils import get_cookie_by_selenium
-from ..config import pwd,start_uids,account
+from ..config import pwd,start_uids,account,MY_UID
 from ..items import WeiboInfoItem
 
 
@@ -48,12 +48,17 @@ class WeiboSpider(Spider):
         info['info'] = info_item
         yield Request(url="https://weibo.cn/%s/info" % uid, callback=self.parse_info2,dont_filter=True,meta={'info':info_item})
         # yield Request(url="https://weibo.cn/%s/profile?page=1" % uid, callback=self.parse_profiles, dont_filter=True)
-        # yield Request(url="https://weibo.cn/%s/follow" % uid, callback=self.parse_relationship, dont_filter=True)
+        if int(uid) == MY_UID:
+            yield Request(url="https://weibo.cn/%s/follow" % uid, callback=self.parse_relationship, dont_filter=True)
         # yield Request(url="https://weibo.cn/%s/fans" % uid, callback=self.parse_relationship, dont_filter=True)
 
     def parse_info2(self, response):
         """ 抓取个人信息 """
-        info = self.get_info(response)
+        text = ";".join(response.xpath('//div//text()').extract())
+        if re.findall('完成度',text):
+            info = self.get_my_info(response)
+        else:
+            info = self.get_relation_info(response)
         yield info
         # yield Request(url="https://weibo.cn/%s/profile?filter=1&page=1" % ID, callback=self.parse_tweets, dont_filter=True)
         # yield Request(url="https://weibo.cn/%s/profile?page=1" % ID, callback=self.parse_tweets, dont_filter=True)
@@ -87,28 +92,30 @@ class WeiboSpider(Spider):
             # relationshipsItem["Host1"] = ID if flag else uid
             # relationshipsItem["Host2"] = uid if flag else ID
             # yield relationshipsItem
+            time.sleep(3)
             yield Request(url="https://weibo.cn/%s" % uid, callback=self.parse_info1)
 
         next_url = response.xpath('//a[text()="下页"]/@href').extract()
+        time.sleep(3)
         if next_url:
             yield Request(url=self.host + next_url[0], callback=self.parse_relationship, dont_filter=True)
 
-    def get_info(self, response):
+    def get_my_info(self, response):
         info = response.meta['info']
-        text1 = ";".join(response.xpath('body/div[@class="c"]//text()').extract())  # 获取标签里的所有text()
-        nickname = re.findall('昵称;:?(.*?);', text1) or re.findall('昵称:(.*?);', text1)
-        gender = re.findall('性别;:?(.*?);', text1) or re.findall('性别:?(.*?);', text1)
-        place = re.findall('地区;:?(.*?);', text1) or re.findall('地区:(.*?);', text1)
-        briefIntroduction = re.findall('简介;:?(.*?);', text1) or re.findall('简介:(.*?);', text1)
-        birthday = re.findall('生日;:?(.*?);', text1) or re.findall('生日:(.*?);', text1)
-        sexOrientation = re.findall('性取向;:?(.*?);', text1) or re.findall('性取向:(.*?);', text1)
-        sentiment = re.findall('感情状况;:?(.*?);', text1) or re.findall('感情状况:(.*?);', text1)
-        vipLevel = re.findall('会员等级;:?(.*?);', text1) or re.findall('会员等级：(.*?);', text1)
-        authentication = re.findall('认证;:?(.*?);', text1) or re.findall('认证:(.*?);', text1)
-        school = re.findall('·;(.*?);', text1) or re.findall('·(.*?);', text1)
-        tag = re.findall('标签:;(.*?)更多',text1)
+        text = ";".join(response.xpath('body/div[@class="c" or @class="tip"]//text()').extract())  # 获取标签里的所有text()
+        nickname = re.findall('昵称;:?(.*?);', text)
+        gender = re.findall('性别;:?(.*?);', text)
+        place = re.findall('地区;:?(.*?);', text)
+        briefIntroduction = re.findall('简介;:?(.*?);', text)
+        birthday = re.findall('生日;:?(.*?);', text)
+        sexOrientation = re.findall('性取向;:?(.*?);', text)
+        sentiment = re.findall('感情状况;:?(.*?);', text)
+        vipLevel = re.findall('会员等级;:?(.*?);', text)
+        authentication = re.findall('认证;:?(.*?);', text)
+        school = re.findall('·;(.*?级);', text)
+        tag = re.findall('标签:;(.*?)更多',text)
 
-        info['School'] = school[0].replace('\xa0','') if school else ''
+        info['School'] = ";".join(school).replace(';\xa0','') if school else ''
         info["NickName"] = nickname[0] if nickname else ''
         info["Gender"] = gender[0] if gender else ''
         if place:
@@ -120,7 +127,44 @@ class WeiboSpider(Spider):
         info["Sentiment"] = sentiment[0] if sentiment else ''
         info["VIPlevel"] = vipLevel[0].replace('\xa0','') if vipLevel else 0
         info["Authentication"] = authentication[0] if authentication else ''
-        info["Tag"] = tag[0].replace(';\xa0','') if tag else ''
+        info["Tag"] = tag[0].replace(';\xa0','')[:-1] if tag else ''
+        if sexOrientation and sexOrientation[0]:
+            if sexOrientation[0] == gender[0]:
+                info["SexualOrientation"] = "同性恋"
+            else:
+                info["SexualOrientation"] = "异性恋"
+        else:
+            info["SexualOrientation"] = ''
+        return info
+
+    def get_relation_info(self, response):
+        info = response.meta['info']
+        text = ";".join(response.xpath('body/div[@class="c" or @class="tip"]//text()').extract())  # 获取标签里的所有text()
+        nickname = re.findall('昵称:(.*?);', text)
+        gender = re.findall('性别:?(.*?);', text)
+        place = re.findall('地区:(.*?);', text)
+        briefIntroduction = re.findall('简介:(.*?);', text)
+        birthday =re.findall('生日:(.*?);', text)
+        sexOrientation = re.findall('性取向:(.*?);', text)
+        sentiment = re.findall('感情状况:(.*?);', text)
+        vipLevel = re.findall('会员等级：(.*?);', text)
+        authentication = re.findall('认证:(.*?);', text)
+        school = re.findall('·(.*?);',text)
+        tag = re.findall('标签:;(.*?)更多',text)
+
+        info['School'] = ";".join(school).replace(';\xa0','') if school else ''
+        info["NickName"] = nickname[0] if nickname else ''
+        info["Gender"] = gender[0] if gender else ''
+        if place:
+            place = place[0].split(" ")
+        info["Province"] = place[0] if place else ''
+        info["City"] = place[1] if len(place) > 1 else ''
+        info["BriefIntroduction"] = briefIntroduction[0] if briefIntroduction and briefIntroduction[0] else ''
+        info['Birthday'] = birthday[0]  if birthday else ''  # 有可能是星座，而非时间
+        info["Sentiment"] = sentiment[0] if sentiment else ''
+        info["VIPlevel"] = vipLevel[0].replace('\xa0','') if vipLevel else 0
+        info["Authentication"] = authentication[0] if authentication else ''
+        info["Tag"] = tag[0].replace(';\xa0','')[:-1] if tag else ''
         if sexOrientation and sexOrientation[0]:
             if sexOrientation[0] == gender[0]:
                 info["SexualOrientation"] = "同性恋"

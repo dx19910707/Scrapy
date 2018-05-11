@@ -52,10 +52,17 @@ class MysqlPipeline(object):
                         key.append(k)
                         value.append(v)
                 key = str(key).replace('[', '(').replace(']', ')').replace('\'', '`')
-                value = str(value).replace('[', '(').replace(']', ')')
+                value = str(value).replace('[', '(').replace(']', ')').replace('\\\\','\\')
                 query = 'INSERT INTO info ' + key + ' VALUES ' + value
                 self.cr.execute(query)
                 self.conn.commit()
             except Exception as e:
-                print(e)
+                self.conn.rollback()
+                if e.args[0] != 1062:
+                    try:
+                        query = 'INSERT INTO error_info(UID,Nickname,error_info) VALUES ' + str((item._values['Uid'],item._values['NickName'],(e.args[1]).replace('\"','').replace('\'','').replace('\\\\','\\')))
+                        self.cr.execute(query)
+                        self.conn.commit()
+                    except Exception as e:
+                        print(e,item._values['Uid'],item._values['NickName'])
         return item
